@@ -201,6 +201,13 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# CDK
+cdk.out/
+cdk.context.json
+*.pyc
+__pycache__/
+.cdk.staging/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

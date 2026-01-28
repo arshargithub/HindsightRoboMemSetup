@@ -1,0 +1,8 @@
+{
+  "app": "python app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "**/__pycache__", "**/.venv", "**/node_modules"]
+  },
+  "context": {}
+}
