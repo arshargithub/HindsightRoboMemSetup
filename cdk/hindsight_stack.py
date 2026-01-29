@@ -276,12 +276,7 @@ def handler(event, context):
         
         # Validate that we have an API key
         if not llm_api_key:
-            raise ValueError(
-                "LLM API key is required but was not provided.\n"
-                "Pass it via CDK context during deployment:\n"
-                "  cdk deploy --context llm_api_key=<your-key>\n"
-                "Or set it in cdk.json under 'context': { 'llm_api_key': '<your-key>' }"
-            )
+            raise ValueError("LLM API key is required. Pass it via CDK context: cdk deploy --context llm_api_key=<your-key>")
         
         # Validate format (should start with sk- or sk-proj- for OpenAI)
         if not (llm_api_key.startswith('sk-') or llm_api_key.startswith('sk-proj-')):
