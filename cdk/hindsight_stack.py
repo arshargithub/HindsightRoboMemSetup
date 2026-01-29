@@ -276,7 +276,12 @@ def handler(event, context):
         
         # Validate that we have an API key
         if not llm_api_key:
-            raise ValueError("LLM API key is empty. Pass it via CDK context: --context llm_api_key=<your-key>")
+            raise ValueError(
+                "LLM API key is required but was not provided.\n"
+                "Pass it via CDK context during deployment:\n"
+                "  cdk deploy --context llm_api_key=<your-key>\n"
+                "Or set it in cdk.json under 'context': { 'llm_api_key': '<your-key>' }"
+            )
         
         # Validate format (should start with sk- or sk-proj- for OpenAI)
         if not (llm_api_key.startswith('sk-') or llm_api_key.startswith('sk-proj-')):
@@ -311,13 +316,9 @@ def handler(event, context):
         )
 
         # Get LLM API key from CDK context (passed via --context llm_api_key=...)
-        llm_api_key = self.node.try_get_context("llm_api_key")
-        if not llm_api_key:
-            raise ValueError(
-                "LLM API key is required. Pass it via CDK context:\n"
-                "  cdk deploy --context llm_api_key=<your-key>\n"
-                "Or set it in cdk.json under 'context': { 'llm_api_key': '<your-key>' }"
-            )
+        # Note: Context may be None during 'cdk synth', but must be provided during 'cdk deploy'
+        # The Lambda will validate and fail with a clear error if missing during deployment
+        llm_api_key = self.node.try_get_context("llm_api_key") or ""
 
         llm_key_resource = cdk.CustomResource(
             self,
