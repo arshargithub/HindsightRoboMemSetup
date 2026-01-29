@@ -79,15 +79,15 @@ class HindsightStack(cdk.Stack):
         )
 
         # Secrets Manager: LLM API key
-        # IMPORTANT: This secret is created empty and MUST be populated before ECS tasks start.
-        # The GitHub Actions workflow populates it automatically from GitHub Secret LLM_API_KEY.
-        # For manual deployments, you must populate it manually:
-        #   aws secretsmanager put-secret-value --secret-id <secret-arn> --secret-string <api-key>
+        # IMPORTANT: This secret is populated automatically during stack creation via LlmKeyPopulator Lambda.
+        # The LLM API key is passed via CDK context (--context llm_api_key=...).
+        # The GitHub Actions workflow passes this automatically from GitHub Secret LLM_API_KEY.
+        # For manual deployments, pass: cdk deploy --context llm_api_key=<your-key>
         # Without a valid API key, Hindsight API tasks will fail with 401 errors during startup.
         llm_secret = secretsmanager.Secret(
             self,
             "LlmApiKeySecret",
-            description=f"Hindsight LLM API key ({environment}) - MUST be populated before deployment completes",
+            description=f"Hindsight LLM API key ({environment}) - auto-populated by CDK Lambda",
         )
 
         # RDS PostgreSQL with pgvector
@@ -241,6 +241,91 @@ def handler(event, context):
                 "DbUrlSecretArn": db_url_secret.secret_arn,
                 "DbName": DB_NAME,
                 "DbUsername": DB_USERNAME,
+            },
+        )
+
+        # Lambda: Populate LLM API key secret automatically during stack creation
+        # This ensures the secret is ready before ECS tasks start
+        # The LLM API key is passed via CDK context (--context llm_api_key=...)
+        llm_key_populator = lambda_.Function(
+            self,
+            "LlmKeyPopulator",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="index.handler",
+            code=lambda_.Code.from_inline("""
+import json
+import boto3
+
+def handler(event, context):
+    secrets_client = boto3.client('secretsmanager')
+    
+    try:
+        # Provider passes ResourceProperties in the event
+        props = event.get('ResourceProperties', event)
+        request_type = event.get('RequestType', 'Create')
+        
+        # Handle DELETE - just return success
+        if request_type == 'Delete':
+            return {
+                'PhysicalResourceId': event.get('PhysicalResourceId', 'llm-key-resource'),
+                'Status': 'SUCCESS'
+            }
+        
+        llm_secret_arn = props['LlmSecretArn']
+        llm_api_key = props.get('LlmApiKey', '')
+        
+        # Validate that we have an API key
+        if not llm_api_key:
+            raise ValueError("LLM API key is empty. Pass it via CDK context: --context llm_api_key=<your-key>")
+        
+        # Validate format (should start with sk- or sk-proj- for OpenAI)
+        if not (llm_api_key.startswith('sk-') or llm_api_key.startswith('sk-proj-')):
+            raise ValueError("LLM API key must start with 'sk-' or 'sk-proj-' (OpenAI key format)")
+        
+        # Populate LLM secret
+        secrets_client.put_secret_value(
+            SecretId=llm_secret_arn,
+            SecretString=llm_api_key
+        )
+        
+        return {
+            'PhysicalResourceId': llm_secret_arn,
+            'Data': {'Message': 'LLM API key secret populated successfully'}
+        }
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        raise e
+"""),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+        )
+
+        # Grant Lambda permissions to write LLM secret
+        llm_secret.grant_write(llm_key_populator)
+
+        # Custom resource to trigger Lambda during stack creation
+        llm_key_provider = cr.Provider(
+            self,
+            "LlmKeyProvider",
+            on_event_handler=llm_key_populator,
+        )
+
+        # Get LLM API key from CDK context (passed via --context llm_api_key=...)
+        llm_api_key = self.node.try_get_context("llm_api_key")
+        if not llm_api_key:
+            raise ValueError(
+                "LLM API key is required. Pass it via CDK context:\n"
+                "  cdk deploy --context llm_api_key=<your-key>\n"
+                "Or set it in cdk.json under 'context': { 'llm_api_key': '<your-key>' }"
+            )
+
+        llm_key_resource = cdk.CustomResource(
+            self,
+            "LlmKeyResource",
+            service_token=llm_key_provider.service_token,
+            properties={
+                "LlmSecretArn": llm_secret.secret_arn,
+                "LlmApiKey": llm_api_key,
             },
         )
 
@@ -494,8 +579,9 @@ def handler(event, context):
             health_check_grace_period=Duration.seconds(120),
         )
         
-        # Ensure DB URL is populated before ECS service starts
+        # Ensure DB URL and LLM key are populated before ECS service starts
         fargate_service.service.node.add_dependency(db_url_resource)
+        fargate_service.service.node.add_dependency(llm_key_resource)
 
         # Allow ECS tasks to connect to RDS
         # IMPORTANT: This security group rule must be added BEFORE the service starts tasks

@@ -56,9 +56,16 @@ jobs:
         run: npm install -g aws-cdk
 
       - name: Validate LLM API key
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
-          if [ -z "${{ secrets.LLM_API_KEY }}" ]; then
+          if [ -z "$LLM_API_KEY" ]; then
             echo "::error::LLM_API_KEY secret is empty. Add your OpenAI (or provider) API key in repo Secrets."
+            exit 1
+          fi
+          # Must look like an OpenAI key (sk- or sk-proj-) so we never overwrite with RDS password / DB URL etc.
+          if ! python3 -c "import os; s=os.environ.get('LLM_API_KEY',''); exit(0 if (s.startswith('sk-') or s.startswith('sk-proj-')) else 1)"; then
+            echo "::error::LLM_API_KEY must start with 'sk-' or 'sk-proj-' (OpenAI key). If you use another provider, update config.py and this check."
             exit 1
           fi
 
@@ -68,37 +75,13 @@ jobs:
           cdk synth HindsightDevStack
 
       - name: CDK Deploy
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
           cd cdk
-          cdk deploy HindsightDevStack --require-approval never
-
-      - name: Set LLM API key in Secrets Manager
-        run: |
-          # Use outputs only after stack has finished (we can't get them before).
-          LLM_ARN=$(aws cloudformation describe-stacks \
-            --stack-name HindsightDevStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`LlmSecretArn`].OutputValue' \
-            --output text --region ${{ env.AWS_REGION }})
-          if [ -z "$LLM_ARN" ] || [ "$LLM_ARN" = "None" ]; then
-            echo "::error::LlmSecretArn not in stack outputs. Check deploy succeeded."
-            exit 1
-          fi
-          aws secretsmanager put-secret-value \
-            --secret-id "$LLM_ARN" \
-            --secret-string "${{ secrets.LLM_API_KEY }}" \
-            --region ${{ env.AWS_REGION }}
-          echo "✓ LLM API key stored in Secrets Manager"
-
-      - name: Force ECS Hindsight API redeploy
-        run: |
-          SVC_ARN=$(aws cloudformation describe-stack-resources --stack-name HindsightDevStack \
-            --region ${{ env.AWS_REGION }} --query 'StackResources[?contains(LogicalResourceId, `HindsightApiService`) && ResourceType==`AWS::ECS::Service`].PhysicalResourceId' --output text | head -1)
-          if [ -n "$SVC_ARN" ] && [ "$SVC_ARN" != "None" ]; then
-            CLUSTER=$(echo "$SVC_ARN" | cut -d'/' -f2)
-            SERVICE=$(basename "$SVC_ARN")
-            aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment --region ${{ env.AWS_REGION }}
-            echo "✓ New Hindsight API tasks will pick up updated LLM key"
-          fi
+          # Pass LLM API key via CDK context so it's populated during stack creation
+          # This ensures the secret is ready BEFORE ECS tasks start
+          cdk deploy HindsightDevStack --require-approval never --context llm_api_key="$LLM_API_KEY"
 
       - name: Verify Database URL Secret (CDK Lambda should have populated it)
         run: |
@@ -154,9 +137,16 @@ jobs:
         run: npm install -g aws-cdk
 
       - name: Validate LLM API key
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
-          if [ -z "${{ secrets.LLM_API_KEY }}" ]; then
+          if [ -z "$LLM_API_KEY" ]; then
             echo "::error::LLM_API_KEY secret is empty. Add your OpenAI (or provider) API key in repo Secrets."
+            exit 1
+          fi
+          # Must look like an OpenAI key (sk- or sk-proj-) so we never overwrite with RDS password / DB URL etc.
+          if ! python3 -c "import os; s=os.environ.get('LLM_API_KEY',''); exit(0 if (s.startswith('sk-') or s.startswith('sk-proj-')) else 1)"; then
+            echo "::error::LLM_API_KEY must start with 'sk-' or 'sk-proj-' (OpenAI key). If you use another provider, update config.py and this check."
             exit 1
           fi
 
@@ -166,36 +156,13 @@ jobs:
           cdk synth HindsightProdStack
 
       - name: CDK Deploy
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
           cd cdk
-          cdk deploy HindsightProdStack --require-approval never
-
-      - name: Set LLM API key in Secrets Manager
-        run: |
-          LLM_ARN=$(aws cloudformation describe-stacks \
-            --stack-name HindsightProdStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`LlmSecretArn`].OutputValue' \
-            --output text --region ${{ env.AWS_REGION }})
-          if [ -z "$LLM_ARN" ] || [ "$LLM_ARN" = "None" ]; then
-            echo "::error::LlmSecretArn not in stack outputs. Check deploy succeeded."
-            exit 1
-          fi
-          aws secretsmanager put-secret-value \
-            --secret-id "$LLM_ARN" \
-            --secret-string "${{ secrets.LLM_API_KEY }}" \
-            --region ${{ env.AWS_REGION }}
-          echo "✓ LLM API key stored in Secrets Manager"
-
-      - name: Force ECS Hindsight API redeploy
-        run: |
-          SVC_ARN=$(aws cloudformation describe-stack-resources --stack-name HindsightProdStack \
-            --region ${{ env.AWS_REGION }} --query 'StackResources[?contains(LogicalResourceId, `HindsightApiService`) && ResourceType==`AWS::ECS::Service`].PhysicalResourceId' --output text | head -1)
-          if [ -n "$SVC_ARN" ] && [ "$SVC_ARN" != "None" ]; then
-            CLUSTER=$(echo "$SVC_ARN" | cut -d'/' -f2)
-            SERVICE=$(basename "$SVC_ARN")
-            aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment --region ${{ env.AWS_REGION }}
-            echo "✓ New Hindsight API tasks will pick up updated LLM key"
-          fi
+          # Pass LLM API key via CDK context so it's populated during stack creation
+          # This ensures the secret is ready BEFORE ECS tasks start
+          cdk deploy HindsightProdStack --require-approval never --context llm_api_key="$LLM_API_KEY"
 
       - name: Verify Database URL Secret (CDK Lambda should have populated it)
         run: |

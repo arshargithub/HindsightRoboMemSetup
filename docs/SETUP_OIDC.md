@@ -223,6 +223,14 @@ Before the workflow can deploy, you need to:
       --region ca-central-1
     ```
 
+### LLM key keeps getting overwritten with wrong value (e.g. RDS password)
+
+- **Root cause**: The workflow used to pass `LLM_API_KEY` through the shell into `put-secret-value`. Special characters (`$`, `"`, etc.) could be mangled, or the wrong value (e.g. RDS password / DB URL) could be stored in the GitHub secret by mistake.
+- **Fixes in place**:
+  - **Format check**: The workflow validates that `LLM_API_KEY` starts with `sk-` or `sk-proj-` (OpenAI). If not, the job fails before any write. This prevents overwriting with RDS password or DB URL.
+  - **File-based write**: The key is written to a temp file via Python (from `env`) and passed to `put-secret-value` as `fileb:///tmp/llm_key.txt`, so the secret never goes through the shell.
+- **What to do**: Ensure the GitHub secret `LLM_API_KEY` is exactly your OpenAI key (from https://platform.openai.com/api-keys), with no extra characters or pasted RDS/DB values. Then push (or run the workflow). No stack delete needed.
+
 ### ECS tasks fail with database connection timeout
 
 - **Root cause**: Security group rule allowing ECS → RDS on port 5432 may be missing.
