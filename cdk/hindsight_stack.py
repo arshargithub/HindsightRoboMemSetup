@@ -65,6 +65,8 @@ class HindsightStack(cdk.Stack):
         )
 
         # Secrets Manager: RDS master password
+        # Restrict to alphanumeric only. Alembic passes DB URL to ConfigParser, which treats %
+        # as interpolation; URL-encoded passwords (e.g. %25) break it. No encoding => no %.
         rds_secret = secretsmanager.Secret(
             self,
             "RdsSecret",
@@ -72,9 +74,7 @@ class HindsightStack(cdk.Stack):
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 secret_string_template='{"username": "' + DB_USERNAME + '"}',
                 generate_string_key="password",
-                # Note: Special characters are URL-encoded in DB URL Lambda, so we can allow more characters
-            # However, avoid characters that might cause issues in JSON or connection strings
-            exclude_characters='"@/\\',
+                exclude_characters='!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~ ',
             ),
         )
 
@@ -162,7 +162,6 @@ class HindsightStack(cdk.Stack):
             code=lambda_.Code.from_inline("""
 import json
 import boto3
-import urllib.parse
 import time
 
 def handler(event, context):
@@ -189,12 +188,9 @@ def handler(event, context):
                 rds_secret = secrets_client.get_secret_value(SecretId=rds_secret_arn)
                 rds_password = json.loads(rds_secret['SecretString'])['password']
                 
-                # URL encode username and password to handle special characters
-                encoded_username = urllib.parse.quote_plus(db_username)
-                encoded_password = urllib.parse.quote_plus(rds_password)
-                
-                # Construct database URL with proper encoding
-                db_url = f"postgresql://{encoded_username}:{encoded_password}@{rds_endpoint}:5432/{db_name}"
+                # RDS password is alphanumeric-only (exclude_characters in secret). No URL encoding.
+                # Alembic passes DB URL to ConfigParser; % triggers interpolation and breaks migrations.
+                db_url = f"postgresql://{db_username}:{rds_password}@{rds_endpoint}:5432/{db_name}"
                 
                 # Populate DB URL secret
                 secrets_client.put_secret_value(
