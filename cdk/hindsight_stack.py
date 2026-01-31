@@ -65,8 +65,8 @@ class HindsightStack(cdk.Stack):
         )
 
         # Secrets Manager: RDS master password
-        # Restrict to alphanumeric only. Alembic passes DB URL to ConfigParser, which treats %
-        # as interpolation; URL-encoded passwords (e.g. %25) break it. No encoding => no %.
+        # Alphanumeric only. Alembic passes DB URL to ConfigParser, which treats % as interpolation;
+        # URL-encoded passwords (e.g. %25) break it. Use exclude_punctuation to avoid symbols.
         rds_secret = secretsmanager.Secret(
             self,
             "RdsSecret",
@@ -74,7 +74,7 @@ class HindsightStack(cdk.Stack):
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 secret_string_template='{"username": "' + DB_USERNAME + '"}',
                 generate_string_key="password",
-                exclude_characters='!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~ ',
+                exclude_punctuation=True,
             ),
         )
 
